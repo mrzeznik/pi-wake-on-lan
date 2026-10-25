@@ -1,10 +1,10 @@
 /**
- * pi-wake core logic. No pi runtime dependencies — only Node built-ins — so it
+ * pi-wake-on-lan core logic. No pi runtime dependencies — only Node built-ins — so it
  * can be unit-tested in isolation. The pi extension wiring lives in index.ts.
  */
 
 import { createSocket } from "node:dgram";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 // ---------------------------------------------------------------------------
@@ -125,6 +125,13 @@ export function validateConfig(cfg: WolConfig): string[] {
 export function loadConfig(path: string): WolConfig {
 	const cfg: WolConfig = { ...DEFAULTS };
 	try {
+		if (process.platform !== "win32") {
+			try {
+				chmodSync(path, 0o600);
+			} catch {
+				// Missing files and permission errors are handled by the read below.
+			}
+		}
 		const parsed = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
 		if (parsed && typeof parsed === "object") {
 			// Coerce each field to its expected type; anything malformed falls
@@ -153,8 +160,9 @@ export function loadConfig(path: string): WolConfig {
 }
 
 export function saveConfig(path: string, cfg: WolConfig): void {
-	mkdirSync(dirname(path), { recursive: true });
-	writeFileSync(path, `${JSON.stringify(cfg, null, 2)}\n`, "utf8");
+	mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+	writeFileSync(path, `${JSON.stringify(cfg, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+	if (process.platform !== "win32") chmodSync(path, 0o600);
 }
 
 // ---------------------------------------------------------------------------
@@ -333,7 +341,7 @@ export function createWaker(deps: WakerDeps = {}): EnsureAwake {
 	return async function ensureAwake(cfg, probeUrl, signal, notify) {
 		const macErr = validateMac(cfg.mac);
 		if (macErr) {
-			notify(`pi-wake: ${macErr}`, "error");
+			notify(`pi-wake-on-lan: ${macErr}`, "error");
 			return;
 		}
 
@@ -347,11 +355,11 @@ export function createWaker(deps: WakerDeps = {}): EnsureAwake {
 			// Reserve the slot before the async send so concurrent wake requests
 			// cannot both pass the cooldown check and duplicate the packet.
 			lastWolAt = now();
-			notify(`pi-wake: sending WoL to ${cfg.mac}`, "info");
+			notify(`pi-wake-on-lan: sending WoL to ${cfg.mac}`, "info");
 			try {
 				await doWol(cfg.mac, cfg.broadcastAddress, cfg.wolPort);
 			} catch (err) {
-				notify(`pi-wake: WoL failed: ${(err as Error).message}`, "error");
+				notify(`pi-wake-on-lan: WoL failed: ${(err as Error).message}`, "error");
 				return;
 			}
 		}
@@ -359,9 +367,9 @@ export function createWaker(deps: WakerDeps = {}): EnsureAwake {
 		// Wait for the host: probe until it responds, or a fixed grace delay when
 		// probing is unavailable/disabled.
 		if (probeUrl) {
-			notify(`pi-wake: waiting for ${probeUrl} …`, "info");
+			notify(`pi-wake-on-lan: waiting for ${probeUrl} …`, "info");
 			const up = await doWait(probeUrl, cfg.waitForHost, signal);
-			notify(up ? "pi-wake: machine is awake" : "pi-wake: machine did not respond in time", up ? "info" : "warning");
+			notify(up ? "pi-wake-on-lan: machine is awake" : "pi-wake-on-lan: machine did not respond in time", up ? "info" : "warning");
 		} else if (cfg.waitForHost > 0) {
 			await doSleep(cfg.waitForHost, signal);
 		}

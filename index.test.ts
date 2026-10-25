@@ -15,11 +15,11 @@ const wol = vi.hoisted(() => {
 		validateIpv4: vi.fn(() => true),
 		validateMac: vi.fn(() => null),
 		validateUrl: vi.fn(() => null),
-		agentDir: "/tmp/pi-wake-agent",
+		agentDir: "/tmp/pi-wake-on-lan-agent",
 	};
 });
 
-const CONFIG_PATH = "/tmp/pi-wake-agent/wol.json";
+const CONFIG_PATH = "/tmp/pi-wake-on-lan-agent/wol.json";
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
 	getAgentDir: () => wol.agentDir,
@@ -85,6 +85,7 @@ beforeEach(() => {
 	vi.restoreAllMocks();
 	vi.clearAllMocks();
 	vi.spyOn(console, "info").mockImplementation(() => {});
+	vi.spyOn(console, "warn").mockImplementation(() => {});
 	vi.spyOn(console, "error").mockImplementation(() => {});
 	wol.validateConfig.mockReturnValue([]);
 	wol.validateMac.mockReturnValue(null);
@@ -147,7 +148,7 @@ describe("before_provider_request", () => {
 		const ctx = makeCtx({ model: { provider: "local-llm", id: "model-a", baseUrl: "http://x/v1" } });
 		await handlers.get("before_provider_request")!({}, ctx);
 
-		expect(console.info).toHaveBeenCalledWith("[pi-wake] matched provider request local-llm/model-a");
+		expect(console.info).toHaveBeenCalledWith("[pi-wake-on-lan] matched provider request local-llm/model-a");
 		expect(ctx.ui.notify).not.toHaveBeenCalled();
 	});
 
@@ -171,8 +172,9 @@ describe("before_provider_request", () => {
 		expect(probeUrl).toBe("http://192.0.2.50:1234/v1/models");
 		expect(signal).toBeUndefined();
 
-		notify("hello", "info");
-		expect(ctx.ui.notify).toHaveBeenCalledWith("hello", "info");
+		notify(`pi-wake-on-lan: sending WoL to ${cfg.mac}`, "info");
+		expect(console.info).toHaveBeenCalledWith("[pi-wake-on-lan] pi-wake-on-lan: sending WoL to AA:BB:CC:DD:EE:FF");
+		expect(ctx.ui.notify).toHaveBeenCalledWith(`pi-wake-on-lan: sending WoL to ${cfg.mac}`, "info");
 	});
 
 	it("passes the provider baseUrl as the fallback candidate", async () => {
@@ -272,7 +274,7 @@ describe("/wol command", () => {
 		await command.handler("", ctx as never);
 
 		expect(ctx.ui.select).toHaveBeenCalledWith(
-			"pi-wake settings",
+			"pi-wake-on-lan settings",
 			expect.arrayContaining(["Automatic WoL: ON (toggle)", "Wake now", "Close"]),
 		);
 		expect(ctx.ui.editor).not.toHaveBeenCalled();
@@ -306,7 +308,7 @@ describe("/wol command", () => {
 		const [savedPath, savedCfg] = wol.saveConfig.mock.calls[0];
 		expect(savedPath).toBe(CONFIG_PATH);
 		expect(savedCfg.enabled).toBe(true);
-		expect(ctx.ui.notify).toHaveBeenCalledWith("pi-wake: automatic WoL enabled", "info");
+		expect(ctx.ui.notify).toHaveBeenCalledWith("pi-wake-on-lan: automatic WoL enabled", "info");
 	});
 
 	it("disables automatic WoL", async () => {
@@ -318,7 +320,7 @@ describe("/wol command", () => {
 		const [savedPath, savedCfg] = wol.saveConfig.mock.calls[0];
 		expect(savedPath).toBe(CONFIG_PATH);
 		expect(savedCfg.enabled).toBe(false);
-		expect(ctx.ui.notify).toHaveBeenCalledWith("pi-wake: automatic WoL disabled", "info");
+		expect(ctx.ui.notify).toHaveBeenCalledWith("pi-wake-on-lan: automatic WoL disabled", "info");
 	});
 
 	it("toggles automatic WoL from the menu and returns to the menu", async () => {
@@ -344,7 +346,8 @@ describe("/wol command", () => {
 
 		expect(wol.deriveProbeUrl).toHaveBeenCalledWith(undefined, "http://x/v1", undefined);
 		expect(wol.isUp).toHaveBeenCalledWith("http://x/v1/models", undefined);
-		expect(ctx.ui.notify).toHaveBeenCalledWith("pi-wake: probe DOWN (http://x/v1/models)", "warning");
+		expect(ctx.ui.notify).toHaveBeenCalledWith("pi-wake-on-lan: probe DOWN (http://x/v1/models)", "warning");
+		expect(console.warn).toHaveBeenCalledWith("[pi-wake-on-lan] pi-wake-on-lan: probe DOWN (http://x/v1/models)");
 		expect(wol.ensureAwake).not.toHaveBeenCalled();
 	});
 

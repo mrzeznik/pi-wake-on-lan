@@ -1,4 +1,4 @@
-# pi-wake
+# pi-wake-on-lan
 
 Wake a local LLM host before pi sends it a provider request.
 
@@ -6,7 +6,7 @@ Wake a local LLM host before pi sends it a provider request.
 
 - Exact provider IDs in `providers` trigger automatic WoL.
 - If probing is enabled and the service responds, no packet is sent. Otherwise
-  pi-wake broadcasts a magic packet, then waits for the service or timeout. Any
+  pi-wake-on-lan broadcasts a magic packet, then waits for the service or timeout. Any
   HTTP response counts as available.
 - The probe URL defaults to the current model's `baseUrl` (or provider `baseUrl`)
   plus `/models`. Set `probeUrl` to override it.
@@ -15,8 +15,8 @@ Wake a local LLM host before pi sends it a provider request.
 
 ## Install
 
-Copy or symlink this folder into `~/.pi/agent/extensions/pi-wake/` (global) or
-`.pi/extensions/pi-wake/` (project-local), then restart pi or run `/reload`.
+Copy or symlink this folder into `~/.pi/agent/extensions/pi-wake-on-lan/` (global) or
+`.pi/extensions/pi-wake-on-lan/` (project-local), then restart pi or run `/reload`.
 There is no build step or runtime dependency.
 
 ## Configure
@@ -53,8 +53,13 @@ a manual probe check, and a manual wake action. Settings are stored in
 | `/wol port <1-65535>` | Set the packet port. |
 | `/wol wake` | Run the wake sequence manually, even if automatic WoL is off. |
 
-Provider matches and WoL/probe outcomes are logged to the process console with a
-`[pi-wake]` prefix; they are not added to the agent conversation.
+Logs use a `[pi-wake-on-lan]` prefix and include provider/model IDs and wake/probe details such as the MAC address and probe URL. They are process-console logs, not conversation messages.
+
+## Privacy
+
+- Probe requests are GETs and contain no prompt or provider API key. 
+- The WoL packet intentionally broadcasts the target MAC on the local network.
+- The extension has no telemetry.
 
 ## Tests
 

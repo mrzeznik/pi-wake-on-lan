@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -154,7 +154,7 @@ describe("loadConfig / saveConfig", () => {
 	let dir: string;
 
 	beforeEach(() => {
-		dir = mkdtempSync(join(tmpdir(), "pi-wake-test-"));
+		dir = mkdtempSync(join(tmpdir(), "pi-wake-on-lan-test-"));
 	});
 
 	afterEach(() => {
@@ -210,6 +210,23 @@ describe("loadConfig / saveConfig", () => {
 		const nested = join(dir, "sub", "wol.json");
 		saveConfig(nested, validConfig());
 		expect(JSON.parse(readFileSync(nested, "utf8"))).toMatchObject({ mac: "AA:BB:CC:DD:EE:FF" });
+	});
+
+	it("restricts config file permissions on POSIX systems", () => {
+		const configPath = path();
+		saveConfig(configPath, validConfig());
+		if (process.platform !== "win32") expect(statSync(configPath).mode & 0o777).toBe(0o600);
+	});
+
+	it("tightens permissions on existing config files when loaded", () => {
+		if (process.platform === "win32") return;
+		const configPath = path();
+		writeFileSync(configPath, JSON.stringify(validConfig()), { mode: 0o644 });
+		chmodSync(configPath, 0o644);
+
+		loadConfig(configPath);
+
+		expect(statSync(configPath).mode & 0o777).toBe(0o600);
 	});
 });
 

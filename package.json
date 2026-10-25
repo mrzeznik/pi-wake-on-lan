@@ -1,5 +1,5 @@
 {
-  "name": "pi-wake",
+  "name": "pi-wake-on-lan",
   "version": "1.0.0",
   "description": "Wake-on-LAN for pi: wake a local LLM machine before provider requests.",
   "private": true,
