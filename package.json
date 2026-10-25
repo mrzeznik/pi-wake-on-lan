@@ -1,0 +1,20 @@
+{
+  "name": "pi-wake",
+  "version": "1.0.0",
+  "description": "Wake-on-LAN for pi: wake a local LLM machine before provider requests.",
+  "private": true,
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "echo 'no build step — loaded directly as TypeScript'"
+  },
+  "devDependencies": {
+    "vitest": "^5.0.5"
+  }
+}
