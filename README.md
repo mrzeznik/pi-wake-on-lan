@@ -15,7 +15,14 @@ Wake a local LLM host before pi sends it a provider request.
 
 ## Install
 
-Copy or symlink this folder into `~/.pi/agent/extensions/pi-wake-on-lan/` (global) or
+After publication, install with:
+
+```bash
+pi install npm:pi-wake-on-lan
+```
+
+From source, copy or symlink this folder into
+`~/.pi/agent/extensions/pi-wake-on-lan/` (global) or
 `.pi/extensions/pi-wake-on-lan/` (project-local), then restart pi or run `/reload`.
 There is no build step or runtime dependency.
 
