@@ -12,6 +12,8 @@ import { dirname } from "node:path";
 // ---------------------------------------------------------------------------
 
 export interface WolConfig {
+	/** Whether automatic Wake-on-LAN is enabled for matching providers. */
+	enabled: boolean;
 	/** MAC address of the machine to wake, e.g. "AA:BB:CC:DD:EE:FF". */
 	mac: string;
 	/** Explicit probe URL. When unset, derived as `<baseUrl>/models`. */
@@ -34,6 +36,7 @@ export interface WolConfig {
 }
 
 export const DEFAULTS: WolConfig = {
+	enabled: true,
 	mac: "",
 	waitForHost: 120_000,
 	providers: [],
@@ -100,6 +103,9 @@ export function validateConfig(cfg: WolConfig): string[] {
 	if (!Array.isArray(cfg.providers) || cfg.providers.some((p) => typeof p !== "string" || !p.trim())) {
 		errors.push("providers: must be a list of non-empty provider ids.");
 	}
+	if (typeof cfg.enabled !== "boolean") {
+		errors.push("enabled: must be a boolean.");
+	}
 	if (typeof cfg.useProbe !== "boolean") {
 		errors.push("useProbe: must be a boolean.");
 	}
@@ -123,6 +129,7 @@ export function loadConfig(path: string): WolConfig {
 		if (parsed && typeof parsed === "object") {
 			// Coerce each field to its expected type; anything malformed falls
 			// back to the default so downstream code never sees a bad type.
+			if (typeof parsed.enabled === "boolean") cfg.enabled = parsed.enabled;
 			if (typeof parsed.mac === "string") cfg.mac = parsed.mac;
 			if (typeof parsed.probeUrl === "string" && parsed.probeUrl.trim()) cfg.probeUrl = parsed.probeUrl.trim();
 			if (typeof parsed.waitForHost === "number" && Number.isFinite(parsed.waitForHost) && parsed.waitForHost >= 0) {

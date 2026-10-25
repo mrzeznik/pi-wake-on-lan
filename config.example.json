@@ -1,4 +1,5 @@
 {
+  "enabled": true,
   "mac": "AA:BB:CC:DD:EE:FF",
   "probeUrl": "http://192.0.2.50:1234/v1/models",
   "waitForHost": 120000,

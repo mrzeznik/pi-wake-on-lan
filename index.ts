@@ -18,6 +18,7 @@ import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil
 import {
 	createWaker,
 	deriveProbeUrl,
+	isUp,
 	loadConfig,
 	saveConfig,
 	validateConfig,
@@ -38,47 +39,108 @@ function resolveAndWake(ctx: ExtensionContext, cfg: WolConfig): Promise<void> {
 	const model = ctx.model;
 	const providerBaseUrl = model ? ctx.modelRegistry.getProvider(model.provider)?.baseUrl : undefined;
 	const probeUrl = cfg.useProbe ? deriveProbeUrl(cfg.probeUrl, model?.baseUrl, providerBaseUrl) : undefined;
-	return ensureAwake(cfg, probeUrl, ctx.signal, (message, type) => notify(ctx, message, type));
+	return ensureAwake(cfg, probeUrl, ctx.signal, (message, type) => {
+		const safeMessage = probeUrl ? message.replaceAll(probeUrl, "<probe-url>") : message;
+		const log = type === "error" ? console.error : type === "warning" ? console.warn : console.info;
+		log(`[pi-wake] ${safeMessage}`);
+		notify(ctx, message, type);
+	});
 }
 
 // ---------------------------------------------------------------------------
 // /wol command
 // ---------------------------------------------------------------------------
 
-async function showStatus(ctx: ExtensionContext, cfg: WolConfig): Promise<void> {
+async function checkProbe(ctx: ExtensionContext, cfg: WolConfig): Promise<void> {
+	const model = ctx.model;
+	const providerBaseUrl = model ? ctx.modelRegistry.getProvider(model.provider)?.baseUrl : undefined;
+	const url = deriveProbeUrl(cfg.probeUrl, model?.baseUrl, providerBaseUrl);
+	if (!url) {
+		ctx.ui.notify("pi-wake: no probe URL available; configure one with /wol probe <url>", "warning");
+		return;
+	}
+	const up = await isUp(url, ctx.signal);
+	const message = `pi-wake: probe ${up ? "UP" : "DOWN"} (${url})`;
+	const safeMessage = message.replaceAll(url, "<probe-url>");
+	(up ? console.info : console.warn)(`[pi-wake] ${safeMessage}`);
+	ctx.ui.notify(message, up ? "info" : "warning");
+}
+
+function statusText(cfg: WolConfig): string {
 	const errors = validateConfig(cfg);
 	const lines = [
 		"Wake-on-LAN configuration",
-		"",
-		`mac:              ${cfg.mac || "(not set)"}`,
-		`probeUrl:         ${cfg.probeUrl || "(auto — provider baseUrl + /models)"}`,
-		`waitForHost:      ${cfg.waitForHost} ms (0 = no limit / no delay)`,
-		`providers:        ${cfg.providers.length ? cfg.providers.join(", ") : "(none)"}`,
-		`useProbe:         ${cfg.useProbe}`,
-		`broadcastAddress: ${cfg.broadcastAddress}`,
-		`wolPort:          ${cfg.wolPort}`,
-		"",
+		`automatic WoL:   ${cfg.enabled ? "ON" : "OFF"}`,
+		`mac:             ${cfg.mac || "(not set)"}`,
+		`probe URL:       ${cfg.probeUrl || "(auto — provider baseUrl + /models)"}`,
+		`wait for host:   ${cfg.waitForHost} ms (0 = no limit / no delay)`,
+		`providers:       ${cfg.providers.length ? cfg.providers.join(", ") : "(none)"}`,
+		`use probe:       ${cfg.useProbe}`,
+		`broadcast:       ${cfg.broadcastAddress}:${cfg.wolPort}`,
 	];
-	if (errors.length) {
-		lines.push("Validation errors:", `  - ${errors.join("\n  - ")}`, "");
+	if (errors.length) lines.push("", "Validation errors:", ...errors.map((error) => `  - ${error}`));
+	return lines.join("\n");
+}
+
+async function showSettingsMenu(ctx: ExtensionContext, cfg: WolConfig): Promise<void> {
+	if (!ctx.hasUI) {
+		ctx.ui.notify(`${statusText(cfg)}\n\nUse /wol <setting> to change configuration.`, "info");
+		return;
 	}
-	lines.push(
-		"Subcommands:",
-		"  /wol mac <AA:BB:CC:DD:EE:FF>     set MAC address",
-		"  /wol probe <url|auto>            override probe URL (auto = derive)",
-		"  /wol wait <ms>                   set waitForHost (0 = no limit / no delay)",
-		"  /wol providers <a,b,c>           set providers that trigger WoL",
-		"  /wol use-probe <on|off>          enable/disable probing",
-		"  /wol broadcast <ipv4>            set UDP broadcast address",
-		"  /wol port <1-65535>              set UDP port",
-		"  /wol wake                        wake the machine now",
-		"  /wol status                      show this configuration",
-	);
-	const text = lines.join("\n");
-	if (ctx.hasUI) {
-		await ctx.ui.editor("pi-wake configuration", text);
-	} else {
-		ctx.ui.notify(text, "info");
+
+	while (true) {
+		const choices = [
+			`Automatic WoL: ${cfg.enabled ? "ON" : "OFF"} (toggle)`,
+			`MAC address: ${cfg.mac || "not set"}`,
+			"Clear MAC address",
+			`Providers: ${cfg.providers.join(", ") || "none"}`,
+			`Probe URL: ${cfg.probeUrl || "auto"}`,
+			"Check probe now (no WoL)",
+			`Probe before/after wake: ${cfg.useProbe ? "ON" : "OFF"} (toggle)`,
+			`Wait for host: ${cfg.waitForHost} ms`,
+			`Broadcast address: ${cfg.broadcastAddress}`,
+			`WoL port: ${cfg.wolPort}`,
+			"Wake now",
+			"Close",
+		];
+		const selected = await ctx.ui.select("pi-wake settings", choices);
+		if (!selected || selected === "Close") return;
+
+		if (selected === choices[0]) {
+			cfg.enabled = !cfg.enabled;
+			saveConfig(CONFIG_PATH, cfg);
+			ctx.ui.notify(`pi-wake: automatic WoL ${cfg.enabled ? "enabled" : "disabled"}`, "info");
+		} else if (selected === choices[1]) {
+			const value = await ctx.ui.input("Set MAC address", cfg.mac || "AA:BB:CC:DD:EE:FF");
+			if (value !== undefined) setMac(ctx, cfg, value.trim());
+		} else if (selected === choices[2]) {
+			cfg.mac = "";
+			saveConfig(CONFIG_PATH, cfg);
+			ctx.ui.notify("pi-wake: MAC address cleared", "info");
+		} else if (selected === choices[3]) {
+			const value = await ctx.ui.input("Set providers (comma-separated; enter 'clear' to remove all)", cfg.providers.join(","));
+			if (value !== undefined) setProviders(ctx, cfg, value);
+		} else if (selected === choices[4]) {
+			const value = await ctx.ui.input("Probe URL (or 'auto' to derive)", cfg.probeUrl || "auto");
+			if (value !== undefined) setProbe(ctx, cfg, value);
+		} else if (selected === choices[5]) {
+			await checkProbe(ctx, cfg);
+		} else if (selected === choices[6]) {
+			cfg.useProbe = !cfg.useProbe;
+			saveConfig(CONFIG_PATH, cfg);
+			ctx.ui.notify(`pi-wake: probe ${cfg.useProbe ? "enabled" : "disabled"}`, "info");
+		} else if (selected === choices[7]) {
+			const value = await ctx.ui.input("Wait for host (milliseconds; 0 = no wait limit)", String(cfg.waitForHost));
+			if (value !== undefined) setWait(ctx, cfg, value.trim());
+		} else if (selected === choices[8]) {
+			const value = await ctx.ui.input("Broadcast IPv4 address", cfg.broadcastAddress);
+			if (value !== undefined) setBroadcast(ctx, cfg, value.trim());
+		} else if (selected === choices[9]) {
+			const value = await ctx.ui.input("WoL UDP port (1-65535)", String(cfg.wolPort));
+			if (value !== undefined) setPort(ctx, cfg, value.trim());
+		} else if (selected === choices[10]) {
+			await resolveAndWake(ctx, cfg);
+		}
 	}
 }
 
@@ -127,6 +189,12 @@ function setWait(ctx: ExtensionContext, cfg: WolConfig, value: string): void {
 }
 
 function setProviders(ctx: ExtensionContext, cfg: WolConfig, value: string): void {
+	if (value.trim().toLowerCase() === "clear") {
+		cfg.providers = [];
+		saveConfig(CONFIG_PATH, cfg);
+		ctx.ui.notify("pi-wake: provider list cleared", "info");
+		return;
+	}
 	const list = value
 		.split(",")
 		.map((s) => s.trim())
@@ -182,10 +250,20 @@ export default function (pi: ExtensionAPI) {
 			const model = ctx.model;
 			if (!model) return;
 			const cfg = loadConfig(CONFIG_PATH);
-			if (!cfg.mac || !cfg.providers.includes(model.provider)) return;
+			if (!cfg.providers.includes(model.provider)) return;
+			console.info(`[pi-wake] matched provider request ${model.provider}/${model.id}`);
+			if (!cfg.enabled) {
+				console.info("[pi-wake] automatic WoL is disabled; skipping");
+				return;
+			}
+			if (!cfg.mac) {
+				console.info("[pi-wake] no MAC address configured; skipping");
+				return;
+			}
 			await resolveAndWake(ctx, cfg);
-		} catch {
+		} catch (err) {
 			// Never break the model request because of WoL/probe failures.
+			console.error(`[pi-wake] automatic wake failed: ${err instanceof Error ? err.message : String(err)}`);
 		}
 	});
 
@@ -199,17 +277,27 @@ export default function (pi: ExtensionAPI) {
 				const cfg = loadConfig(CONFIG_PATH);
 
 				switch (sub) {
+					case "on":
+					case "off":
+						cfg.enabled = sub === "on";
+						saveConfig(CONFIG_PATH, cfg);
+						ctx.ui.notify(`pi-wake: automatic WoL ${cfg.enabled ? "enabled" : "disabled"}`, "info");
+						return;
 					case undefined:
 					case "status":
 					case "show":
 					case "help":
-						await showStatus(ctx, cfg);
+						if (sub === undefined) await showSettingsMenu(ctx, cfg);
+						else ctx.ui.notify(statusText(cfg), "info");
 						return;
 					case "mac":
 						setMac(ctx, cfg, rest);
 						return;
 					case "probe":
 						setProbe(ctx, cfg, rest);
+						return;
+					case "check":
+						await checkProbe(ctx, cfg);
 						return;
 					case "wait":
 						setWait(ctx, cfg, rest);

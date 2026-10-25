@@ -35,6 +35,7 @@ vi.mock("node:dgram", () => ({ createSocket: dgramMock.createSocket }));
 
 function validConfig(overrides: Partial<WolConfig> = {}): WolConfig {
 	return {
+		enabled: true,
 		mac: "AA:BB:CC:DD:EE:FF",
 		waitForHost: 100,
 		providers: ["local-llm"],
@@ -124,6 +125,11 @@ describe("validateConfig", () => {
 		expect(validateConfig(cfg).some((e) => e.startsWith("providers:"))).toBe(true);
 	});
 
+	it("reports a non-boolean enabled flag", () => {
+		const cfg = validConfig({ enabled: "yes" as unknown as boolean });
+		expect(validateConfig(cfg).some((e) => e.startsWith("enabled:"))).toBe(true);
+	});
+
 	it("reports a non-boolean useProbe", () => {
 		const cfg = validConfig({ useProbe: "yes" as unknown as boolean });
 		expect(validateConfig(cfg).some((e) => e.startsWith("useProbe:"))).toBe(true);
@@ -164,6 +170,11 @@ describe("loadConfig / saveConfig", () => {
 	it("returns defaults when the file is not valid JSON", () => {
 		writeFileSync(path(), "not json");
 		expect(loadConfig(path())).toEqual(DEFAULTS);
+	});
+
+	it("loads the enabled flag", () => {
+		writeFileSync(path(), JSON.stringify({ enabled: false }));
+		expect(loadConfig(path()).enabled).toBe(false);
 	});
 
 	it("merges known fields and keeps defaults for the rest", () => {

@@ -8,6 +8,7 @@ const wol = vi.hoisted(() => {
 		// `createWaker()` call (which runs at import time) is wired correctly.
 		createWaker: vi.fn(() => ensureAwake),
 		deriveProbeUrl: vi.fn(),
+		isUp: vi.fn(async () => true),
 		loadConfig: vi.fn(),
 		saveConfig: vi.fn(),
 		validateConfig: vi.fn(() => [] as string[]),
@@ -27,6 +28,7 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
 vi.mock("./wol", () => ({
 	createWaker: wol.createWaker,
 	deriveProbeUrl: wol.deriveProbeUrl,
+	isUp: wol.isUp,
 	loadConfig: wol.loadConfig,
 	saveConfig: wol.saveConfig,
 	validateConfig: wol.validateConfig,
@@ -53,7 +55,12 @@ function makePi() {
 
 function makeCtx(overrides: Record<string, unknown> = {}) {
 	return {
-		ui: { notify: vi.fn(), editor: vi.fn(async () => undefined) },
+		ui: {
+			notify: vi.fn(),
+			select: vi.fn(async () => undefined),
+			input: vi.fn(async () => undefined),
+			editor: vi.fn(async () => undefined),
+		},
 		hasUI: true,
 		model: undefined,
 		modelRegistry: { getProvider: vi.fn(() => undefined) },
@@ -64,6 +71,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
 
 function validConfig() {
 	return {
+		enabled: true,
 		mac: "AA:BB:CC:DD:EE:FF",
 		waitForHost: 0,
 		providers: ["local-llm"],
@@ -74,12 +82,16 @@ function validConfig() {
 }
 
 beforeEach(() => {
+	vi.restoreAllMocks();
 	vi.clearAllMocks();
+	vi.spyOn(console, "info").mockImplementation(() => {});
+	vi.spyOn(console, "error").mockImplementation(() => {});
 	wol.validateConfig.mockReturnValue([]);
 	wol.validateMac.mockReturnValue(null);
 	wol.validateUrl.mockReturnValue(null);
 	wol.validateIpv4.mockReturnValue(true);
 	wol.deriveProbeUrl.mockReturnValue("http://192.0.2.50:1234/v1/models");
+	wol.isUp.mockResolvedValue(true);
 });
 
 describe("before_provider_request", () => {
@@ -89,6 +101,17 @@ describe("before_provider_request", () => {
 		wol.loadConfig.mockReturnValue(validConfig());
 
 		const ctx = makeCtx({ model: undefined });
+		await handlers.get("before_provider_request")!({}, ctx);
+
+		expect(wol.ensureAwake).not.toHaveBeenCalled();
+	});
+
+	it("does nothing when automatic WoL is disabled", async () => {
+		const { pi, handlers } = makePi();
+		createExtension(pi as never);
+		wol.loadConfig.mockReturnValue({ ...validConfig(), enabled: false });
+
+		const ctx = makeCtx({ model: { provider: "local-llm", baseUrl: "http://x/v1" } });
 		await handlers.get("before_provider_request")!({}, ctx);
 
 		expect(wol.ensureAwake).not.toHaveBeenCalled();
@@ -114,6 +137,18 @@ describe("before_provider_request", () => {
 		await handlers.get("before_provider_request")!({}, ctx);
 
 		expect(wol.ensureAwake).not.toHaveBeenCalled();
+	});
+
+	it("logs a configured provider match without sending text to the conversation", async () => {
+		const { pi, handlers } = makePi();
+		createExtension(pi as never);
+		wol.loadConfig.mockReturnValue(validConfig());
+
+		const ctx = makeCtx({ model: { provider: "local-llm", id: "model-a", baseUrl: "http://x/v1" } });
+		await handlers.get("before_provider_request")!({}, ctx);
+
+		expect(console.info).toHaveBeenCalledWith("[pi-wake] matched provider request local-llm/model-a");
+		expect(ctx.ui.notify).not.toHaveBeenCalled();
 	});
 
 	it("wakes when the provider matches, deriving the probe URL from the model", async () => {
@@ -230,15 +265,17 @@ describe("/wol command", () => {
 		expect(commands.get("wol")?.description).toBeTruthy();
 	});
 
-	it("shows configuration via the editor", async () => {
+	it("opens a selectable settings menu instead of an editable text area", async () => {
 		const { command, ctx } = setup();
 		wol.loadConfig.mockReturnValue(validConfig());
-		wol.validateConfig.mockReturnValue(["mac: bad"]);
 
 		await command.handler("", ctx as never);
 
-		expect(ctx.ui.editor).toHaveBeenCalledWith("pi-wake configuration", expect.stringContaining("Wake-on-LAN configuration"));
-		expect(ctx.ui.editor).toHaveBeenCalledWith(expect.anything(), expect.stringContaining("Validation errors"));
+		expect(ctx.ui.select).toHaveBeenCalledWith(
+			"pi-wake settings",
+			expect.arrayContaining(["Automatic WoL: ON (toggle)", "Wake now", "Close"]),
+		);
+		expect(ctx.ui.editor).not.toHaveBeenCalled();
 	});
 
 	it("falls back to notify when there is no UI", async () => {
@@ -246,7 +283,7 @@ describe("/wol command", () => {
 		ctx.hasUI = false;
 		wol.loadConfig.mockReturnValue(validConfig());
 
-		await command.handler("status", ctx as never);
+		await command.handler("", ctx as never);
 
 		expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Wake-on-LAN configuration"), "info");
 	});
@@ -258,6 +295,57 @@ describe("/wol command", () => {
 		await command.handler("bogus", ctx as never);
 
 		expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("unknown subcommand"), "error");
+	});
+
+	it("enables automatic WoL", async () => {
+		const { command, ctx } = setup();
+		wol.loadConfig.mockReturnValue({ ...validConfig(), enabled: false });
+
+		await command.handler("on", ctx as never);
+
+		const [savedPath, savedCfg] = wol.saveConfig.mock.calls[0];
+		expect(savedPath).toBe(CONFIG_PATH);
+		expect(savedCfg.enabled).toBe(true);
+		expect(ctx.ui.notify).toHaveBeenCalledWith("pi-wake: automatic WoL enabled", "info");
+	});
+
+	it("disables automatic WoL", async () => {
+		const { command, ctx } = setup();
+		wol.loadConfig.mockReturnValue(validConfig());
+
+		await command.handler("off", ctx as never);
+
+		const [savedPath, savedCfg] = wol.saveConfig.mock.calls[0];
+		expect(savedPath).toBe(CONFIG_PATH);
+		expect(savedCfg.enabled).toBe(false);
+		expect(ctx.ui.notify).toHaveBeenCalledWith("pi-wake: automatic WoL disabled", "info");
+	});
+
+	it("toggles automatic WoL from the menu and returns to the menu", async () => {
+		const { command, ctx } = setup();
+		wol.loadConfig.mockReturnValue(validConfig());
+		ctx.ui.select.mockResolvedValueOnce("Automatic WoL: ON (toggle)").mockResolvedValueOnce("Close");
+
+		await command.handler("", ctx as never);
+
+		expect(wol.saveConfig).toHaveBeenCalledTimes(1);
+		expect(wol.saveConfig.mock.calls[0][1].enabled).toBe(false);
+		expect(ctx.ui.select).toHaveBeenCalledTimes(2);
+	});
+
+	it("manually checks the resolved probe URL without sending WoL", async () => {
+		const { command, ctx } = setup();
+		wol.loadConfig.mockReturnValue(validConfig());
+		ctx.model = { provider: "local-llm", baseUrl: "http://x/v1" };
+		wol.deriveProbeUrl.mockReturnValue("http://x/v1/models");
+		wol.isUp.mockResolvedValue(false);
+
+		await command.handler("check", ctx as never);
+
+		expect(wol.deriveProbeUrl).toHaveBeenCalledWith(undefined, "http://x/v1", undefined);
+		expect(wol.isUp).toHaveBeenCalledWith("http://x/v1/models", undefined);
+		expect(ctx.ui.notify).toHaveBeenCalledWith("pi-wake: probe DOWN (http://x/v1/models)", "warning");
+		expect(wol.ensureAwake).not.toHaveBeenCalled();
 	});
 
 	it("sets a valid MAC", async () => {
