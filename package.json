@@ -1,9 +1,15 @@
 {
   "name": "pi-wake-on-lan",
   "version": "1.0.0",
-  "description": "Wake-on-LAN for pi: wake a local LLM machine before provider requests.",
-  "private": true,
+  "license": "MIT",
+  "description": "Wake local LLM hosts before pi provider requests.",
   "type": "module",
+  "keywords": ["pi-package", "wake-on-lan"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mrzeznik/pi-wake-on-lan.git"
+  },
+  "files": ["index.ts", "wol.ts", "config.example.json"],
   "pi": {
     "extensions": [
       "./index.ts"
@@ -13,6 +19,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "check": "echo 'no build step — loaded directly as TypeScript'"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
   },
   "devDependencies": {
     "vitest": "^5.0.5"
