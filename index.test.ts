@@ -299,6 +299,18 @@ describe("/wol command", () => {
 		expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("unknown subcommand"), "error");
 	});
 
+	it("status shows the resolved probe URL", async () => {
+		const { command, ctx } = setup();
+		wol.loadConfig.mockReturnValue(validConfig());
+		ctx.model = { provider: "local-llm", baseUrl: "http://x/v1" };
+		wol.deriveProbeUrl.mockReturnValue("http://x/v1/models");
+
+		await command.handler("status", ctx as never);
+
+		expect(wol.deriveProbeUrl).toHaveBeenCalledWith(undefined, "http://x/v1", undefined);
+		expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("http://x/v1/models"), "info");
+	});
+
 	it("enables automatic WoL", async () => {
 		const { command, ctx } = setup();
 		wol.loadConfig.mockReturnValue({ ...validConfig(), enabled: false });

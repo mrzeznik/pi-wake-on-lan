@@ -445,7 +445,8 @@ describe("createWaker", () => {
 		expect(waitUntilUpMock).toHaveBeenCalledWith("http://x/models", 100, undefined);
 		expect(notify).toHaveBeenNthCalledWith(1, expect.stringContaining("sending WoL"), "info");
 		expect(notify).toHaveBeenNthCalledWith(2, expect.stringContaining("waiting"), "info");
-		expect(notify).toHaveBeenNthCalledWith(3, expect.stringContaining("awake"), "info");
+		expect(notify).toHaveBeenNthCalledWith(3, expect.stringContaining("awaiting host"), "info");
+		expect(notify).toHaveBeenNthCalledWith(4, expect.stringContaining("awake"), "info");
 	});
 
 	it("uses a fixed delay instead of probing when probing is disabled", async () => {

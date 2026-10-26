@@ -15,7 +15,7 @@ Wake a local LLM host before pi sends it a provider request.
 
 ## Install
 
-After publication, install with:
+Install with:
 
 ```bash
 pi install npm:pi-wake-on-lan

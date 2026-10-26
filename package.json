@@ -18,7 +18,7 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "check": "echo 'no build step — loaded directly as TypeScript'"
+    "check": "npm run test"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"

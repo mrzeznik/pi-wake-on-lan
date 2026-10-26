@@ -132,7 +132,14 @@ export function loadConfig(path: string): WolConfig {
 				// Missing files and permission errors are handled by the read below.
 			}
 		}
-		const parsed = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+		const raw = readFileSync(path, "utf8");
+		let parsed: Record<string, unknown>;
+		try {
+			parsed = JSON.parse(raw) as Record<string, unknown>;
+		} catch (err) {
+			console.warn(`[pi-wake-on-lan] ${path} is not valid JSON; using defaults (${err instanceof Error ? err.message : String(err)})`);
+			return cfg;
+		}
 		if (parsed && typeof parsed === "object") {
 			// Coerce each field to its expected type; anything malformed falls
 			// back to the default so downstream code never sees a bad type.
@@ -153,8 +160,11 @@ export function loadConfig(path: string): WolConfig {
 				cfg.wolPort = parsed.wolPort;
 			}
 		}
-	} catch {
+	} catch (err) {
 		// Missing or unreadable config → defaults.
+		if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+			console.warn(`[pi-wake-on-lan] could not read ${path}; using defaults (${err instanceof Error ? err.message : String(err)})`);
+		}
 	}
 	return cfg;
 }
@@ -172,7 +182,8 @@ export function saveConfig(path: string, cfg: WolConfig): void {
 function timeoutSignal(ms: number): AbortSignal {
 	if (typeof AbortSignal.timeout === "function") return AbortSignal.timeout(ms);
 	const ctrl = new AbortController();
-	setTimeout(() => ctrl.abort(), ms);
+	const timer = setTimeout(() => ctrl.abort(), ms);
+	ctrl.signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
 	return ctrl.signal;
 }
 
@@ -189,7 +200,7 @@ function anySignal(signals: AbortSignal[]): AbortSignal {
 	return ctrl.signal;
 }
 
-function probeSignal(external?: AbortSignal): AbortSignal | undefined {
+function probeSignal(external?: AbortSignal): AbortSignal {
 	const timeout = timeoutSignal(PROBE_TIMEOUT_MS);
 	return external ? anySignal([external, timeout]) : timeout;
 }
@@ -326,6 +337,12 @@ export type EnsureAwake = (
 	notify: NotifyFn,
 ) => Promise<void>;
 
+/** Format a future time as local HH:MM:SS for the "awaiting host" log. */
+function formatWaitUntil(msFromNow: number): string {
+	const d = new Date(Date.now() + msFromNow);
+	return d.toTimeString().slice(0, 8); // "HH:MM:SS" in local time
+}
+
 export function createWaker(deps: WakerDeps = {}): EnsureAwake {
 	const doIsUp = deps.isUp ?? isUp;
 	const doWait = deps.waitUntilUp ?? waitUntilUp;
@@ -368,9 +385,15 @@ export function createWaker(deps: WakerDeps = {}): EnsureAwake {
 		// probing is unavailable/disabled.
 		if (probeUrl) {
 			notify(`pi-wake-on-lan: waiting for ${probeUrl} …`, "info");
+			if (cfg.waitForHost > 0) {
+				notify(`pi-wake-on-lan: awaiting host until ${formatWaitUntil(cfg.waitForHost)}`, "info");
+			} else {
+				notify("pi-wake-on-lan: awaiting host indefinitely", "info");
+			}
 			const up = await doWait(probeUrl, cfg.waitForHost, signal);
 			notify(up ? "pi-wake-on-lan: machine is awake" : "pi-wake-on-lan: machine did not respond in time", up ? "info" : "warning");
 		} else if (cfg.waitForHost > 0) {
+			notify(`pi-wake-on-lan: awaiting host until ${formatWaitUntil(cfg.waitForHost)}`, "info");
 			await doSleep(cfg.waitForHost, signal);
 		}
 	};
